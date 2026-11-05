@@ -1,0 +1,154 @@
+{
+  "name": "JobRadar - Etapa 1: Ingesta Apify",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## ⚙️ Setup Etapa 1\n\nAntes de activar este workflow:\n\n1. En el archivo .env del proyecto, completá APIFY_TOKEN (tu token de apify.com → Settings → Integrations) y APIFY_ACTOR_ID (elegí un actor de LinkedIn Jobs en Apify Store).\n\n2. En la consola de Apify, abrí el actor, configurá el input (keywords, location, publishedAt = past 24 hours / r86400) y presioná **Save input** — el workflow llama al actor sin body, así usa ese input guardado.\n\n3. `docker compose up -d` con el .env recargado (si ya estaba levantado: `docker compose down && docker compose up -d`).",
+        "height": 380,
+        "width": 420,
+        "color": 4
+      },
+      "id": "note-setup",
+      "name": "Nota: Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-640, -320],
+      "webhookId": null
+    },
+    {
+      "parameters": {
+        "content": "## 📥 Flujo Etapa 1\n\nDaily 9:00 → Apify run-sync-get-dataset-items (un solo call: dispara el actor y devuelve el dataset completo) → Code node normaliza a schema interno.\n\n👉 Probá con **Execute workflow** (botón Test workflow).",
+        "height": 220,
+        "width": 380
+      },
+      "id": "note-flujo",
+      "name": "Nota: Flujo",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-640, 80],
+      "webhookId": null
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 9,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "trigger-diario",
+      "name": "Programar 9:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-160, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.apify.com/v2/acts/{{ $env.APIFY_ACTOR_ID || 'curious_coder~linkedin-jobs-scraper' }}/run-sync-get-dataset-items?token={{ $env.APIFY_TOKEN }}",
+        "options": {
+          "timeout": 330000,
+          "response": {
+            "response": {
+              "neverError": false,
+              "responseFormat": "autodetect"
+            }
+          }
+        }
+      },
+      "id": "apify-ingesta",
+      "name": "Apify: Scrapear ofertas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [120, 0],
+      "webhookId": null
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Normaliza el dataset de Apify al schema interno de JobRadar.\n// El output de \"run-sync-get-dataset-items\" es un array de jobs.\n// Distintos actors usan distintos nombres de campos => mapping defensivo.\n\nconst jobs = [];\n\nfor (const item of $input.all()) {\n  const d = item.json;\n\n  // soporta: array directo, {items: [...]}, o item singular\n  const candidates = Array.isArray(d)\n    ? d\n    : (Array.isArray(d.items) ? d.items : [d]);\n\n  for (const j of candidates) {\n    const link = String(j.link || j.jobUrl || j.url || j.applyUrl || \"\").trim();\n    if (!link) continue; // sin link no sirve para dedup ni para clickear\n\n    const descRaw = String(\n      j.descriptionText || j.description || j.descriptionHtml || \"\"\n    );\n    const desc = descRaw\n      .replace(/<[^>]+>/g, \" \")        // limpiar HTML\n      .replace(/&nbsp;/g, \" \")\n      .replace(/\\s+/g, \" \")\n      .trim();\n\n    jobs.push({\n      json: {\n        fecha_ingesta: new Date().toISOString(),\n        titulo: String(j.title || j.positionName || j.jobTitle || \"\").trim(),\n        empresa: String(j.companyName || j.company || j.organization || \"\").trim(),\n        ubicacion: String(j.location || j.jobLocation || j.candidatesLocation || \"\").trim(),\n        link,\n        fuente: \"apify_linkedin\",\n        // truncar a 4000 chars: los primeros parrafos son lo que evalua la IA\n        descripcion: desc.slice(0, 4000)\n      }\n    });\n  }\n}\n\nif (jobs.length === 0) {\n  console.log(\"OK: el dataset de Apify no trajo ofertas con link (el actor falló o no hay novedades)\");\n}\n\nreturn jobs;"
+      },
+      "id": "normalizar-01",
+      "name": "Normalizar ofertas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 0],
+      "webhookId": null
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.link }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "filter-encoded",
+      "name": "¿Tiene link?",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [680, 0],
+      "webhookId": null
+    }
+  ],
+  "connections": {
+    "Programar 9:00": {
+      "main": [
+        [
+          {
+            "node": "Apify: Scrapear ofertas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify: Scrapear ofertas": {
+      "main": [
+        [
+          {
+            "node": "Normalizar ofertas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar ofertas": {
+      "main": [
+        [
+          {
+            "node": "¿Tiene link?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [],
+  "meta": {
+    "fleetRunner": false
+  }
+}

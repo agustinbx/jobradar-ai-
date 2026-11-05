@@ -14,6 +14,10 @@ services:
     restart: unless-stopped
     ports:
       - "5678:5678"
+    # .env contiene las API keys (Apify, Gemini, Telegram); se inyectan
+    # al contenedor para poder usarlas en nodos con $env.NOMBRE
+    env_file:
+      - .env
     environment:
       # Zona horaria para los Schedule Triggers (cron a las 09:00)
       - GENERIC_TIMEZONE=${TIMEZONE:-America/Argentina/Buenos_Aires}
