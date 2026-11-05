@@ -1,0 +1,13 @@
+# Secretos
+.env
+
+# n8n local data (exportado con credenciales)
+workflows/*.local.json
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
